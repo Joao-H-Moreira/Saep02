@@ -14,78 +14,86 @@ export type Database = {
   }
   public: {
     Tables: {
-      products: {
+      categories: {
         Row: {
-          category: string
-          connectivity: string | null
           created_at: string | null
-          current_stock: number
           description: string | null
-          dimensions: string | null
           id: string
-          minimum_stock: number
           name: string
-          resolution: string | null
-          storage: string | null
-          unit_price: number | null
-          updated_at: string | null
-          voltage: string | null
         }
         Insert: {
-          category: string
-          connectivity?: string | null
           created_at?: string | null
-          current_stock?: number
           description?: string | null
-          dimensions?: string | null
           id?: string
-          minimum_stock?: number
           name: string
-          resolution?: string | null
-          storage?: string | null
-          unit_price?: number | null
-          updated_at?: string | null
-          voltage?: string | null
         }
         Update: {
-          category?: string
-          connectivity?: string | null
           created_at?: string | null
-          current_stock?: number
           description?: string | null
-          dimensions?: string | null
           id?: string
-          minimum_stock?: number
           name?: string
-          resolution?: string | null
-          storage?: string | null
-          unit_price?: number | null
-          updated_at?: string | null
-          voltage?: string | null
         }
         Relationships: []
+      }
+      products: {
+        Row: {
+          category_id: string | null
+          created_at: string | null
+          current_quantity: number
+          description: string | null
+          id: string
+          minimum_quantity: number
+          name: string
+          unit: string
+          updated_at: string | null
+        }
+        Insert: {
+          category_id?: string | null
+          created_at?: string | null
+          current_quantity?: number
+          description?: string | null
+          id?: string
+          minimum_quantity?: number
+          name: string
+          unit: string
+          updated_at?: string | null
+        }
+        Update: {
+          category_id?: string | null
+          created_at?: string | null
+          current_quantity?: number
+          description?: string | null
+          id?: string
+          minimum_quantity?: number
+          name?: string
+          unit?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "products_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "categories"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       profiles: {
         Row: {
           created_at: string | null
           full_name: string
           id: string
-          role: string | null
-          updated_at: string | null
         }
         Insert: {
           created_at?: string | null
           full_name: string
           id: string
-          role?: string | null
-          updated_at?: string | null
         }
         Update: {
           created_at?: string | null
           full_name?: string
           id?: string
-          role?: string | null
-          updated_at?: string | null
         }
         Relationships: []
       }
@@ -93,32 +101,29 @@ export type Database = {
         Row: {
           created_at: string | null
           id: string
-          movement_date: string | null
           movement_type: string
           notes: string | null
           product_id: string
           quantity: number
-          user_id: string
+          responsible_user_id: string
         }
         Insert: {
           created_at?: string | null
           id?: string
-          movement_date?: string | null
           movement_type: string
           notes?: string | null
           product_id: string
           quantity: number
-          user_id: string
+          responsible_user_id: string
         }
         Update: {
           created_at?: string | null
           id?: string
-          movement_date?: string | null
           movement_type?: string
           notes?: string | null
           product_id?: string
           quantity?: number
-          user_id?: string
+          responsible_user_id?: string
         }
         Relationships: [
           {

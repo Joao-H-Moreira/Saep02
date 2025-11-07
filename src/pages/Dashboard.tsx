@@ -1,140 +1,194 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
-import { Session } from "@supabase/supabase-js";
-import Header from "@/components/Header";
-import StatsCard from "@/components/StatsCard";
+import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
-import { Package, TrendingDown, TrendingUp, AlertTriangle } from "lucide-react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Package, TrendingUp, TrendingDown, AlertTriangle, LogOut } from "lucide-react";
 import { toast } from "sonner";
+
+interface DashboardStats {
+  totalProducts: number;
+  lowStockProducts: number;
+  totalEntries: number;
+  totalExits: number;
+}
 
 const Dashboard = () => {
   const navigate = useNavigate();
-  const [session, setSession] = useState<Session | null>(null);
   const [userName, setUserName] = useState("");
-  const [stats, setStats] = useState({
+  const [stats, setStats] = useState<DashboardStats>({
     totalProducts: 0,
-    lowStock: 0,
-    totalValue: 0,
+    lowStockProducts: 0,
+    totalEntries: 0,
+    totalExits: 0,
   });
 
   useEffect(() => {
-    const setupAuth = async () => {
-      const { data: { subscription } } = supabase.auth.onAuthStateChange(
-        (event, currentSession) => {
-          setSession(currentSession);
-          if (!currentSession) {
-            navigate("/auth");
-          }
-        }
-      );
+    checkAuth();
+    loadDashboardData();
+  }, []);
 
-      const { data: { session: currentSession } } = await supabase.auth.getSession();
-      setSession(currentSession);
-      
-      if (!currentSession) {
-        navigate("/auth");
-      } else {
-        loadUserProfile(currentSession.user.id);
-        loadStats();
-      }
+  const checkAuth = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    
+    if (!session) {
+      navigate("/auth");
+      return;
+    }
 
-      return () => subscription.unsubscribe();
-    };
-
-    setupAuth();
-  }, [navigate]);
-
-  const loadUserProfile = async (userId: string) => {
-    const { data } = await supabase
+    // Get user profile
+    const { data: profile } = await supabase
       .from("profiles")
       .select("full_name")
-      .eq("id", userId)
+      .eq("id", session.user.id)
       .single();
-    
-    if (data) {
-      setUserName(data.full_name);
+
+    if (profile) {
+      setUserName(profile.full_name);
     }
   };
 
-  const loadStats = async () => {
+  const loadDashboardData = async () => {
+    // Get total products
+    const { count: totalProducts } = await supabase
+      .from("products")
+      .select("*", { count: "exact", head: true });
+
+    // Get low stock products
     const { data: products } = await supabase
       .from("products")
-      .select("*");
+      .select("current_quantity, minimum_quantity");
 
-    if (products) {
-      const total = products.length;
-      const lowStock = products.filter(p => p.current_stock <= p.minimum_stock).length;
-      const totalValue = products.reduce((sum, p) => sum + (p.current_stock * (p.unit_price || 0)), 0);
+    const lowStockProducts = products?.filter(
+      (p) => p.current_quantity <= p.minimum_quantity
+    ).length || 0;
 
-      setStats({
-        totalProducts: total,
-        lowStock,
-        totalValue,
-      });
+    // Get entries count
+    const { count: totalEntries } = await supabase
+      .from("stock_movements")
+      .select("*", { count: "exact", head: true })
+      .eq("movement_type", "entrada");
 
-      if (lowStock > 0) {
-        toast.warning(`Atenção: ${lowStock} produto(s) com estoque baixo!`, {
-          duration: 5000,
-        });
-      }
-    }
+    // Get exits count
+    const { count: totalExits } = await supabase
+      .from("stock_movements")
+      .select("*", { count: "exact", head: true })
+      .eq("movement_type", "saida");
+
+    setStats({
+      totalProducts: totalProducts || 0,
+      lowStockProducts,
+      totalEntries: totalEntries || 0,
+      totalExits: totalExits || 0,
+    });
   };
 
-  if (!session) {
-    return null;
-  }
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    toast.success("Logout realizado com sucesso");
+    navigate("/auth");
+  };
 
   return (
-    <div className="min-h-screen bg-background">
-      <Header userName={userName} />
-      
+    <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-primary/10">
+      <header className="border-b bg-card/50 backdrop-blur-sm">
+        <div className="container mx-auto px-4 py-4 flex justify-between items-center">
+          <div className="flex items-center gap-2">
+            <Package className="h-6 w-6 text-primary" />
+            <h1 className="text-xl font-bold">Sistema de Estoque</h1>
+          </div>
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-muted-foreground">
+              Olá, <span className="font-semibold text-foreground">{userName}</span>
+            </span>
+            <Button variant="outline" size="sm" onClick={handleLogout}>
+              <LogOut className="h-4 w-4 mr-2" />
+              Sair
+            </Button>
+          </div>
+        </div>
+      </header>
+
       <main className="container mx-auto px-4 py-8">
-        <div className="mb-8">
-          <h2 className="text-3xl font-bold mb-2">Dashboard</h2>
-          <p className="text-muted-foreground">Visão geral do seu estoque de equipamentos</p>
-        </div>
+        <div className="space-y-8">
+          <div>
+            <h2 className="text-3xl font-bold mb-2">Dashboard</h2>
+            <p className="text-muted-foreground">
+              Visão geral do sistema de gestão de estoque
+            </p>
+          </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <StatsCard
-            title="Total de Produtos"
-            value={stats.totalProducts}
-            icon={Package}
-            variant="default"
-          />
-          <StatsCard
-            title="Produtos em Estoque Baixo"
-            value={stats.lowStock}
-            icon={AlertTriangle}
-            variant={stats.lowStock > 0 ? "warning" : "success"}
-          />
-          <StatsCard
-            title="Valor Total em Estoque"
-            value={`R$ ${stats.totalValue.toFixed(2)}`}
-            icon={TrendingUp}
-            variant="success"
-          />
-        </div>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Total de Produtos</CardTitle>
+                <Package className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{stats.totalProducts}</div>
+                <p className="text-xs text-muted-foreground">Produtos cadastrados</p>
+              </CardContent>
+            </Card>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <Button
-            size="lg"
-            className="h-32 text-lg font-semibold"
-            onClick={() => navigate("/products")}
-          >
-            <Package className="mr-3 h-6 w-6" />
-            Gerenciar Produtos
-          </Button>
-          
-          <Button
-            size="lg"
-            variant="outline"
-            className="h-32 text-lg font-semibold"
-            onClick={() => navigate("/stock")}
-          >
-            <TrendingDown className="mr-3 h-6 w-6" />
-            Gestão de Estoque
-          </Button>
+            <Card className="border-warning">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Estoque Baixo</CardTitle>
+                <AlertTriangle className="h-4 w-4 text-warning" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-warning">{stats.lowStockProducts}</div>
+                <p className="text-xs text-muted-foreground">Produtos abaixo do mínimo</p>
+              </CardContent>
+            </Card>
+
+            <Card className="border-success">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Total de Entradas</CardTitle>
+                <TrendingUp className="h-4 w-4 text-success" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-success">{stats.totalEntries}</div>
+                <p className="text-xs text-muted-foreground">Movimentações de entrada</p>
+              </CardContent>
+            </Card>
+
+            <Card className="border-destructive">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Total de Saídas</CardTitle>
+                <TrendingDown className="h-4 w-4 text-destructive" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-destructive">{stats.totalExits}</div>
+                <p className="text-xs text-muted-foreground">Movimentações de saída</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <Card className="hover:shadow-lg transition-shadow cursor-pointer" onClick={() => navigate("/products")}>
+              <CardHeader>
+                <CardTitle>Cadastro de Produtos</CardTitle>
+                <CardDescription>
+                  Gerencie o cadastro de produtos, categorias e informações
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button className="w-full">Acessar Cadastro</Button>
+              </CardContent>
+            </Card>
+
+            <Card className="hover:shadow-lg transition-shadow cursor-pointer" onClick={() => navigate("/stock")}>
+              <CardHeader>
+                <CardTitle>Gestão de Estoque</CardTitle>
+                <CardDescription>
+                  Controle entradas, saídas e movimentações de estoque
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button className="w-full">Acessar Gestão</Button>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       </main>
     </div>

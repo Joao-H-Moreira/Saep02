@@ -1,173 +1,157 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
-import { Session } from "@supabase/supabase-js";
-import Header from "@/components/Header";
+import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Plus, Pencil, Trash2, Search } from "lucide-react";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { ArrowLeft, Plus, Search, Pencil, Trash2, Package } from "lucide-react";
 import { toast } from "sonner";
-import { z } from "zod";
 
-const productSchema = z.object({
-  name: z.string().min(3, "Nome deve ter no mínimo 3 caracteres"),
-  description: z.string().optional(),
-  category: z.enum(["smartphone", "notebook", "smart_tv", "outros"]),
-  voltage: z.string().optional(),
-  resolution: z.string().optional(),
-  dimensions: z.string().optional(),
-  storage: z.string().optional(),
-  connectivity: z.string().optional(),
-  minimum_stock: z.number().min(0, "Estoque mínimo deve ser >= 0"),
-  current_stock: z.number().min(0, "Estoque atual deve ser >= 0"),
-  unit_price: z.number().min(0, "Preço deve ser >= 0"),
-});
-
-type Product = {
+interface Category {
   id: string;
   name: string;
-  description?: string;
-  category: string;
-  voltage?: string;
-  resolution?: string;
-  dimensions?: string;
-  storage?: string;
-  connectivity?: string;
-  minimum_stock: number;
-  current_stock: number;
-  unit_price?: number;
-};
+}
+
+interface Product {
+  id: string;
+  name: string;
+  description: string | null;
+  unit: string;
+  current_quantity: number;
+  minimum_quantity: number;
+  category_id: string | null;
+  categories?: { name: string };
+}
 
 const Products = () => {
   const navigate = useNavigate();
-  const [session, setSession] = useState<Session | null>(null);
-  const [userName, setUserName] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  
+  // Form states
   const [formData, setFormData] = useState({
     name: "",
     description: "",
-    category: "outros",
-    voltage: "",
-    resolution: "",
-    dimensions: "",
-    storage: "",
-    connectivity: "",
-    minimum_stock: 10,
-    current_stock: 0,
-    unit_price: 0,
+    category_id: "",
+    unit: "unidade",
+    minimum_quantity: "0",
   });
 
   useEffect(() => {
-    const setupAuth = async () => {
-      const { data: { subscription } } = supabase.auth.onAuthStateChange(
-        (event, currentSession) => {
-          setSession(currentSession);
-          if (!currentSession) {
-            navigate("/auth");
-          }
-        }
-      );
+    checkAuth();
+    loadCategories();
+    loadProducts();
+  }, []);
 
-      const { data: { session: currentSession } } = await supabase.auth.getSession();
-      setSession(currentSession);
-      
-      if (!currentSession) {
-        navigate("/auth");
-      } else {
-        loadUserProfile(currentSession.user.id);
-        loadProducts();
-      }
+  const checkAuth = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      navigate("/auth");
+    }
+  };
 
-      return () => subscription.unsubscribe();
-    };
-
-    setupAuth();
-  }, [navigate]);
-
-  const loadUserProfile = async (userId: string) => {
+  const loadCategories = async () => {
     const { data } = await supabase
-      .from("profiles")
-      .select("full_name")
-      .eq("id", userId)
-      .single();
+      .from("categories")
+      .select("*")
+      .order("name");
     
     if (data) {
-      setUserName(data.full_name);
+      setCategories(data);
     }
   };
 
   const loadProducts = async () => {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("products")
-      .select("*")
+      .select(`
+        *,
+        categories (name)
+      `)
       .order("name");
-
-    if (error) {
-      toast.error("Erro ao carregar produtos");
-    } else {
-      setProducts(data || []);
+    
+    if (data) {
+      setProducts(data);
     }
   };
 
-  const handleSaveProduct = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!formData.name || !formData.unit) {
+      toast.error("Preencha todos os campos obrigatórios");
+      return;
+    }
 
-    try {
-      const validated = productSchema.parse(formData);
+    const productData = {
+      name: formData.name,
+      description: formData.description || null,
+      category_id: formData.category_id || null,
+      unit: formData.unit,
+      minimum_quantity: parseFloat(formData.minimum_quantity),
+    };
 
-      const productData = {
-        name: validated.name,
-        description: validated.description || null,
-        category: validated.category,
-        voltage: validated.voltage || null,
-        resolution: validated.resolution || null,
-        dimensions: validated.dimensions || null,
-        storage: validated.storage || null,
-        connectivity: validated.connectivity || null,
-        minimum_stock: validated.minimum_stock,
-        current_stock: validated.current_stock,
-        unit_price: validated.unit_price,
-      };
+    if (editingProduct) {
+      const { error } = await supabase
+        .from("products")
+        .update(productData)
+        .eq("id", editingProduct.id);
 
-      if (editingProduct) {
-        const { error } = await supabase
-          .from("products")
-          .update(productData)
-          .eq("id", editingProduct.id);
-
-        if (error) throw error;
+      if (error) {
+        toast.error("Erro ao atualizar produto");
+      } else {
         toast.success("Produto atualizado com sucesso!");
-      } else {
-        const { error } = await supabase
-          .from("products")
-          .insert([productData]);
-
-        if (error) throw error;
-        toast.success("Produto cadastrado com sucesso!");
+        resetForm();
+        loadProducts();
       }
+    } else {
+      const { error } = await supabase
+        .from("products")
+        .insert([{ ...productData, current_quantity: 0 }]);
 
-      setIsDialogOpen(false);
-      resetForm();
-      loadProducts();
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        toast.error(error.errors[0].message);
+      if (error) {
+        toast.error("Erro ao criar produto");
       } else {
-        toast.error("Erro ao salvar produto");
+        toast.success("Produto criado com sucesso!");
+        resetForm();
+        loadProducts();
       }
     }
   };
 
-  const handleDeleteProduct = async (id: string) => {
-    if (!confirm("Tem certeza que deseja excluir este produto?")) return;
+  const handleDelete = async (id: string) => {
+    if (!confirm("Tem certeza que deseja excluir este produto?")) {
+      return;
+    }
 
     const { error } = await supabase
       .from("products")
@@ -182,285 +166,230 @@ const Products = () => {
     }
   };
 
-  const handleEditProduct = (product: Product) => {
+  const handleEdit = (product: Product) => {
     setEditingProduct(product);
     setFormData({
       name: product.name,
       description: product.description || "",
-      category: product.category,
-      voltage: product.voltage || "",
-      resolution: product.resolution || "",
-      dimensions: product.dimensions || "",
-      storage: product.storage || "",
-      connectivity: product.connectivity || "",
-      minimum_stock: product.minimum_stock,
-      current_stock: product.current_stock,
-      unit_price: product.unit_price || 0,
+      category_id: product.category_id || "",
+      unit: product.unit,
+      minimum_quantity: product.minimum_quantity.toString(),
     });
-    setIsDialogOpen(true);
+    setDialogOpen(true);
   };
 
   const resetForm = () => {
-    setEditingProduct(null);
     setFormData({
       name: "",
       description: "",
-      category: "outros",
-      voltage: "",
-      resolution: "",
-      dimensions: "",
-      storage: "",
-      connectivity: "",
-      minimum_stock: 10,
-      current_stock: 0,
-      unit_price: 0,
+      category_id: "",
+      unit: "unidade",
+      minimum_quantity: "0",
     });
+    setEditingProduct(null);
+    setDialogOpen(false);
   };
 
   const filteredProducts = products.filter(product =>
-    product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    product.category.toLowerCase().includes(searchTerm.toLowerCase())
+    product.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  if (!session) return null;
-
   return (
-    <div className="min-h-screen bg-background">
-      <Header userName={userName} />
-      
-      <main className="container mx-auto px-4 py-8">
-        <div className="mb-6 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Button variant="outline" onClick={() => navigate("/")}>
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Voltar
-            </Button>
-            <div>
-              <h2 className="text-3xl font-bold">Gerenciar Produtos</h2>
-              <p className="text-muted-foreground">Cadastre e gerencie seus equipamentos</p>
-            </div>
-          </div>
-
-          <Dialog open={isDialogOpen} onOpenChange={(open) => {
-            setIsDialogOpen(open);
-            if (!open) resetForm();
-          }}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="h-4 w-4 mr-2" />
-                Novo Produto
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>{editingProduct ? "Editar Produto" : "Novo Produto"}</DialogTitle>
-                <DialogDescription>
-                  Preencha os dados do produto
-                </DialogDescription>
-              </DialogHeader>
-              
-              <form onSubmit={handleSaveProduct} className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="col-span-2">
-                    <Label htmlFor="name">Nome do Produto *</Label>
-                    <Input
-                      id="name"
-                      value={formData.name}
-                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      required
-                    />
-                  </div>
-
-                  <div className="col-span-2">
-                    <Label htmlFor="description">Descrição</Label>
-                    <Input
-                      id="description"
-                      value={formData.description}
-                      onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    />
-                  </div>
-
-                  <div>
-                    <Label htmlFor="category">Categoria *</Label>
-                    <Select value={formData.category} onValueChange={(value) => setFormData({ ...formData, category: value })}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="smartphone">Smartphone</SelectItem>
-                        <SelectItem value="notebook">Notebook</SelectItem>
-                        <SelectItem value="smart_tv">Smart TV</SelectItem>
-                        <SelectItem value="outros">Outros</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div>
-                    <Label htmlFor="voltage">Tensão</Label>
-                    <Input
-                      id="voltage"
-                      placeholder="Ex: 110V/220V"
-                      value={formData.voltage}
-                      onChange={(e) => setFormData({ ...formData, voltage: e.target.value })}
-                    />
-                  </div>
-
-                  <div>
-                    <Label htmlFor="resolution">Resolução</Label>
-                    <Input
-                      id="resolution"
-                      placeholder="Ex: 1920x1080"
-                      value={formData.resolution}
-                      onChange={(e) => setFormData({ ...formData, resolution: e.target.value })}
-                    />
-                  </div>
-
-                  <div>
-                    <Label htmlFor="dimensions">Dimensões</Label>
-                    <Input
-                      id="dimensions"
-                      placeholder="Ex: 15.6 polegadas"
-                      value={formData.dimensions}
-                      onChange={(e) => setFormData({ ...formData, dimensions: e.target.value })}
-                    />
-                  </div>
-
-                  <div>
-                    <Label htmlFor="storage">Armazenamento</Label>
-                    <Input
-                      id="storage"
-                      placeholder="Ex: 256GB SSD"
-                      value={formData.storage}
-                      onChange={(e) => setFormData({ ...formData, storage: e.target.value })}
-                    />
-                  </div>
-
-                  <div>
-                    <Label htmlFor="connectivity">Conectividade</Label>
-                    <Input
-                      id="connectivity"
-                      placeholder="Ex: Wi-Fi, Bluetooth"
-                      value={formData.connectivity}
-                      onChange={(e) => setFormData({ ...formData, connectivity: e.target.value })}
-                    />
-                  </div>
-
-                  <div>
-                    <Label htmlFor="minimum_stock">Estoque Mínimo *</Label>
-                    <Input
-                      id="minimum_stock"
-                      type="number"
-                      min="0"
-                      value={formData.minimum_stock}
-                      onChange={(e) => setFormData({ ...formData, minimum_stock: parseInt(e.target.value) || 0 })}
-                      required
-                    />
-                  </div>
-
-                  <div>
-                    <Label htmlFor="current_stock">Estoque Atual *</Label>
-                    <Input
-                      id="current_stock"
-                      type="number"
-                      min="0"
-                      value={formData.current_stock}
-                      onChange={(e) => setFormData({ ...formData, current_stock: parseInt(e.target.value) || 0 })}
-                      required
-                    />
-                  </div>
-
-                  <div>
-                    <Label htmlFor="unit_price">Preço Unitário (R$) *</Label>
-                    <Input
-                      id="unit_price"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={formData.unit_price}
-                      onChange={(e) => setFormData({ ...formData, unit_price: parseFloat(e.target.value) || 0 })}
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div className="flex justify-end gap-2">
-                  <Button type="button" variant="outline" onClick={() => {
-                    setIsDialogOpen(false);
-                    resetForm();
-                  }}>
-                    Cancelar
-                  </Button>
-                  <Button type="submit">
-                    {editingProduct ? "Atualizar" : "Cadastrar"}
-                  </Button>
-                </div>
-              </form>
-            </DialogContent>
-          </Dialog>
+    <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-primary/10">
+      <header className="border-b bg-card/50 backdrop-blur-sm">
+        <div className="container mx-auto px-4 py-4">
+          <Button variant="ghost" onClick={() => navigate("/dashboard")}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Voltar ao Dashboard
+          </Button>
         </div>
+      </header>
 
-        <Card className="shadow-soft">
+      <main className="container mx-auto px-4 py-8">
+        <Card>
           <CardHeader>
-            <div className="flex items-center gap-4">
-              <Search className="h-5 w-5 text-muted-foreground" />
-              <Input
-                placeholder="Buscar por nome ou categoria..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="max-w-sm"
-              />
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-2xl flex items-center gap-2">
+                  <Package className="h-6 w-6" />
+                  Cadastro de Produtos
+                </CardTitle>
+                <CardDescription>
+                  Gerencie todos os produtos do seu estoque
+                </CardDescription>
+              </div>
+              <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button onClick={resetForm}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Novo Produto
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-2xl">
+                  <DialogHeader>
+                    <DialogTitle>
+                      {editingProduct ? "Editar Produto" : "Novo Produto"}
+                    </DialogTitle>
+                    <DialogDescription>
+                      Preencha os dados do produto
+                    </DialogDescription>
+                  </DialogHeader>
+                  <form onSubmit={handleSubmit} className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="name">Nome *</Label>
+                        <Input
+                          id="name"
+                          value={formData.name}
+                          onChange={(e) => setFormData({...formData, name: e.target.value})}
+                          required
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="unit">Unidade *</Label>
+                        <Select
+                          value={formData.unit}
+                          onValueChange={(value) => setFormData({...formData, unit: value})}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="unidade">Unidade</SelectItem>
+                            <SelectItem value="kg">Quilograma (kg)</SelectItem>
+                            <SelectItem value="g">Grama (g)</SelectItem>
+                            <SelectItem value="litro">Litro</SelectItem>
+                            <SelectItem value="metro">Metro</SelectItem>
+                            <SelectItem value="kit">Kit</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label htmlFor="description">Descrição</Label>
+                      <Textarea
+                        id="description"
+                        value={formData.description}
+                        onChange={(e) => setFormData({...formData, description: e.target.value})}
+                        rows={3}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="category">Categoria</Label>
+                        <Select
+                          value={formData.category_id}
+                          onValueChange={(value) => setFormData({...formData, category_id: value})}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione uma categoria" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {categories.map((cat) => (
+                              <SelectItem key={cat.id} value={cat.id}>
+                                {cat.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="minimum_quantity">Quantidade Mínima *</Label>
+                        <Input
+                          id="minimum_quantity"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={formData.minimum_quantity}
+                          onChange={(e) => setFormData({...formData, minimum_quantity: e.target.value})}
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <DialogFooter>
+                      <Button type="button" variant="outline" onClick={resetForm}>
+                        Cancelar
+                      </Button>
+                      <Button type="submit">
+                        {editingProduct ? "Atualizar" : "Criar"}
+                      </Button>
+                    </DialogFooter>
+                  </form>
+                </DialogContent>
+              </Dialog>
             </div>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Nome</TableHead>
-                  <TableHead>Categoria</TableHead>
-                  <TableHead className="text-right">Estoque Atual</TableHead>
-                  <TableHead className="text-right">Estoque Mínimo</TableHead>
-                  <TableHead className="text-right">Preço</TableHead>
-                  <TableHead className="text-right">Ações</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredProducts.map((product) => (
-                  <TableRow key={product.id} className={product.current_stock <= product.minimum_stock ? "bg-warning/10" : ""}>
-                    <TableCell className="font-medium">{product.name}</TableCell>
-                    <TableCell className="capitalize">{product.category.replace("_", " ")}</TableCell>
-                    <TableCell className="text-right">{product.current_stock}</TableCell>
-                    <TableCell className="text-right">{product.minimum_stock}</TableCell>
-                    <TableCell className="text-right">
-                      R$ {product.unit_price?.toFixed(2) || "0.00"}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleEditProduct(product)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => handleDeleteProduct(product.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            
-            {filteredProducts.length === 0 && (
-              <div className="text-center py-8 text-muted-foreground">
-                Nenhum produto encontrado
+            <div className="space-y-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar produtos..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-10"
+                />
               </div>
-            )}
+
+              <div className="border rounded-lg">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Nome</TableHead>
+                      <TableHead>Categoria</TableHead>
+                      <TableHead>Unidade</TableHead>
+                      <TableHead className="text-right">Qtd. Atual</TableHead>
+                      <TableHead className="text-right">Qtd. Mínima</TableHead>
+                      <TableHead className="text-right">Ações</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredProducts.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center text-muted-foreground">
+                          Nenhum produto encontrado
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      filteredProducts.map((product) => (
+                        <TableRow key={product.id}>
+                          <TableCell className="font-medium">{product.name}</TableCell>
+                          <TableCell>{product.categories?.name || "-"}</TableCell>
+                          <TableCell>{product.unit}</TableCell>
+                          <TableCell className="text-right">
+                            {product.current_quantity.toFixed(2)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {product.minimum_quantity.toFixed(2)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleEdit(product)}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDelete(product.id)}
+                              >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
           </CardContent>
         </Card>
       </main>

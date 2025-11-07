@@ -1,421 +1,411 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
-import { Session } from "@supabase/supabase-js";
-import Header from "@/components/Header";
+import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Plus, Minus, AlertTriangle } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { ArrowLeft, TrendingUp, TrendingDown, AlertTriangle, History } from "lucide-react";
 import { toast } from "sonner";
-import { z } from "zod";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
 
-const movementSchema = z.object({
-  product_id: z.string().uuid(),
-  movement_type: z.enum(["entrada", "saida"]),
-  quantity: z.number().min(1, "Quantidade deve ser maior que 0"),
-  notes: z.string().optional(),
-});
-
-type Product = {
+interface Product {
   id: string;
   name: string;
-  current_stock: number;
-  minimum_stock: number;
-};
+  unit: string;
+  current_quantity: number;
+  minimum_quantity: number;
+}
 
-type Movement = {
+interface StockMovement {
   id: string;
   product_id: string;
   movement_type: string;
   quantity: number;
-  movement_date: string;
-  notes?: string;
-  products: {
-    name: string;
-  };
-  profiles: {
-    full_name: string;
-  };
-};
+  notes: string | null;
+  created_at: string;
+  responsible_user_id: string;
+  products: { name: string; unit: string };
+}
 
 const Stock = () => {
   const navigate = useNavigate();
-  const [session, setSession] = useState<Session | null>(null);
-  const [userName, setUserName] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
-  const [movements, setMovements] = useState<Movement[]>([]);
+  const [movements, setMovements] = useState<StockMovement[]>([]);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [userId, setUserId] = useState("");
+  
   const [formData, setFormData] = useState({
     product_id: "",
-    movement_type: "entrada" as "entrada" | "saida",
-    quantity: 1,
+    movement_type: "entrada",
+    quantity: "",
     notes: "",
   });
 
   useEffect(() => {
-    const setupAuth = async () => {
-      const { data: { subscription } } = supabase.auth.onAuthStateChange(
-        (event, currentSession) => {
-          setSession(currentSession);
-          if (!currentSession) {
-            navigate("/auth");
-          }
-        }
-      );
+    checkAuth();
+    loadProducts();
+    loadMovements();
+  }, []);
 
-      const { data: { session: currentSession } } = await supabase.auth.getSession();
-      setSession(currentSession);
-      
-      if (!currentSession) {
-        navigate("/auth");
-      } else {
-        loadUserProfile(currentSession.user.id);
-        loadProducts();
-        loadMovements();
-      }
-
-      return () => subscription.unsubscribe();
-    };
-
-    setupAuth();
-  }, [navigate]);
-
-  const loadUserProfile = async (userId: string) => {
-    const { data } = await supabase
-      .from("profiles")
-      .select("full_name")
-      .eq("id", userId)
-      .single();
-    
-    if (data) {
-      setUserName(data.full_name);
+  const checkAuth = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      navigate("/auth");
+    } else {
+      setUserId(session.user.id);
     }
   };
 
   const loadProducts = async () => {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("products")
-      .select("id, name, current_stock, minimum_stock")
+      .select("*")
       .order("name");
-
-    if (error) {
-      toast.error("Erro ao carregar produtos");
-    } else {
-      setProducts(data || []);
-      
-      // Verificar produtos com estoque baixo
-      const lowStock = (data || []).filter(p => p.current_stock <= p.minimum_stock);
-      if (lowStock.length > 0) {
-        lowStock.forEach(product => {
-          toast.warning(
-            `Alerta: ${product.name} está com estoque baixo! (${product.current_stock} unidades)`,
-            { duration: 5000 }
-          );
-        });
-      }
+    
+    if (data) {
+      setProducts(data);
     }
   };
 
   const loadMovements = async () => {
-    const { data, error } = await supabase
+    const { data: movementsData } = await supabase
       .from("stock_movements")
       .select(`
         *,
-        products(name)
+        products (name, unit)
       `)
-      .order("movement_date", { ascending: false })
-      .limit(20);
-
-    if (error) {
-      toast.error("Erro ao carregar movimentações");
-      return;
-    }
-
-    if (data) {
-      // Buscar dados dos perfis separadamente
-      const userIds = [...new Set(data.map(m => m.user_id))];
-      const { data: profilesData } = await supabase
+      .order("created_at", { ascending: false })
+      .limit(50);
+    
+    if (movementsData) {
+      // Fetch user profiles for responsible users
+      const userIds = [...new Set(movementsData.map(m => m.responsible_user_id))];
+      const { data: profiles } = await supabase
         .from("profiles")
         .select("id, full_name")
         .in("id", userIds);
-
-      const profilesMap = new Map(profilesData?.map(p => [p.id, p]) || []);
-
-      const movementsWithProfiles = data.map(movement => ({
-        ...movement,
-        profiles: profilesMap.get(movement.user_id) || { full_name: "Usuário" },
+      
+      const profileMap = new Map(profiles?.map(p => [p.id, p.full_name]) || []);
+      
+      const movementsWithProfiles = movementsData.map(m => ({
+        ...m,
+        responsible_name: profileMap.get(m.responsible_user_id) || "Usuário"
       }));
-
+      
       setMovements(movementsWithProfiles as any);
     }
   };
 
-  const handleSubmitMovement = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!formData.product_id || !formData.quantity) {
+      toast.error("Preencha todos os campos obrigatórios");
+      return;
+    }
 
-    if (!session?.user) return;
+    const quantity = parseFloat(formData.quantity);
+    if (quantity <= 0) {
+      toast.error("A quantidade deve ser maior que zero");
+      return;
+    }
 
-    try {
-      const validated = movementSchema.parse(formData);
+    const { error } = await supabase
+      .from("stock_movements")
+      .insert([{
+        product_id: formData.product_id,
+        movement_type: formData.movement_type,
+        quantity,
+        notes: formData.notes || null,
+        responsible_user_id: userId,
+      }]);
 
-      // Verificar se há estoque suficiente para saída
-      if (validated.movement_type === "saida") {
-        const product = products.find(p => p.id === validated.product_id);
-        if (product && product.current_stock < validated.quantity) {
-          toast.error("Estoque insuficiente para esta saída!");
-          return;
-        }
-      }
-
-      const movementData = {
-        product_id: validated.product_id,
-        movement_type: validated.movement_type,
-        quantity: validated.quantity,
-        notes: validated.notes || null,
-        user_id: session.user.id,
-      };
-
-      const { error } = await supabase
-        .from("stock_movements")
-        .insert([movementData]);
-
-      if (error) throw error;
-
-      toast.success(`${validated.movement_type === "entrada" ? "Entrada" : "Saída"} registrada com sucesso!`);
-      
-      setFormData({
-        product_id: "",
-        movement_type: "entrada",
-        quantity: 1,
-        notes: "",
-      });
-
+    if (error) {
+      toast.error("Erro ao registrar movimentação");
+    } else {
+      toast.success("Movimentação registrada com sucesso!");
+      resetForm();
       loadProducts();
       loadMovements();
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        toast.error(error.errors[0].message);
-      } else {
-        toast.error("Erro ao registrar movimentação");
-      }
     }
   };
 
-  // Algoritmo de ordenação (Bubble Sort) para demonstração
-  const sortedProducts = [...products].sort((a, b) => {
-    return a.name.localeCompare(b.name);
-  });
+  const resetForm = () => {
+    setFormData({
+      product_id: "",
+      movement_type: "entrada",
+      quantity: "",
+      notes: "",
+    });
+    setDialogOpen(false);
+  };
 
-  if (!session) return null;
+  const getLowStockProducts = () => {
+    return products.filter(p => p.current_quantity <= p.minimum_quantity);
+  };
 
   return (
-    <div className="min-h-screen bg-background">
-      <Header userName={userName} />
-      
-      <main className="container mx-auto px-4 py-8">
-        <div className="mb-6 flex items-center gap-4">
-          <Button variant="outline" onClick={() => navigate("/")}>
+    <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-primary/10">
+      <header className="border-b bg-card/50 backdrop-blur-sm">
+        <div className="container mx-auto px-4 py-4">
+          <Button variant="ghost" onClick={() => navigate("/dashboard")}>
             <ArrowLeft className="h-4 w-4 mr-2" />
-            Voltar
+            Voltar ao Dashboard
           </Button>
-          <div>
-            <h2 className="text-3xl font-bold">Gestão de Estoque</h2>
-            <p className="text-muted-foreground">Registre entradas e saídas de produtos</p>
-          </div>
         </div>
+      </header>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card className="shadow-soft">
-            <CardHeader>
-              <CardTitle>Registrar Movimentação</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleSubmitMovement} className="space-y-4">
-                <div>
-                  <Label htmlFor="product">Produto *</Label>
-                  <Select 
-                    value={formData.product_id} 
-                    onValueChange={(value) => setFormData({ ...formData, product_id: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione um produto" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {sortedProducts.map((product) => (
-                        <SelectItem key={product.id} value={product.id}>
-                          {product.name} (Estoque: {product.current_stock})
-                          {product.current_stock <= product.minimum_stock && (
-                            <AlertTriangle className="inline h-4 w-4 ml-2 text-warning" />
-                          )}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div>
-                  <Label htmlFor="movement_type">Tipo de Movimentação *</Label>
-                  <Select 
-                    value={formData.movement_type} 
-                    onValueChange={(value: "entrada" | "saida") => setFormData({ ...formData, movement_type: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="entrada">
-                        <div className="flex items-center">
-                          <Plus className="h-4 w-4 mr-2 text-success" />
-                          Entrada
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="saida">
-                        <div className="flex items-center">
-                          <Minus className="h-4 w-4 mr-2 text-destructive" />
-                          Saída
-                        </div>
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div>
-                  <Label htmlFor="quantity">Quantidade *</Label>
-                  <Input
-                    id="quantity"
-                    type="number"
-                    min="1"
-                    value={formData.quantity}
-                    onChange={(e) => setFormData({ ...formData, quantity: parseInt(e.target.value) || 1 })}
-                    required
-                  />
-                </div>
-
-                <div>
-                  <Label htmlFor="notes">Observações</Label>
-                  <Input
-                    id="notes"
-                    value={formData.notes}
-                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                    placeholder="Informações adicionais (opcional)"
-                  />
-                </div>
-
-                <Button type="submit" className="w-full">
-                  Registrar Movimentação
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
-
-          <Card className="shadow-soft">
-            <CardHeader>
-              <CardTitle>Produtos em Estoque</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3 max-h-[500px] overflow-y-auto">
-                {sortedProducts.map((product) => (
-                  <div 
-                    key={product.id}
-                    className={`p-3 border rounded-lg ${
-                      product.current_stock <= product.minimum_stock 
-                        ? "border-warning bg-warning/5" 
-                        : "border-border"
-                    }`}
-                  >
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <p className="font-medium">{product.name}</p>
-                        <p className="text-sm text-muted-foreground">
-                          Mínimo: {product.minimum_stock} unidades
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className={`text-lg font-bold ${
-                          product.current_stock <= product.minimum_stock 
-                            ? "text-warning" 
-                            : "text-success"
-                        }`}>
-                          {product.current_stock}
-                        </p>
-                        <p className="text-xs text-muted-foreground">em estoque</p>
-                      </div>
-                    </div>
-                    {product.current_stock <= product.minimum_stock && (
-                      <div className="mt-2 flex items-center gap-2 text-xs text-warning">
-                        <AlertTriangle className="h-3 w-3" />
-                        Estoque abaixo do mínimo!
-                      </div>
-                    )}
-                  </div>
+      <main className="container mx-auto px-4 py-8 space-y-6">
+        {getLowStockProducts().length > 0 && (
+          <Alert className="border-warning bg-warning/10">
+            <AlertTriangle className="h-4 w-4 text-warning" />
+            <AlertDescription className="text-warning-foreground">
+              <strong>Atenção!</strong> {getLowStockProducts().length} produto(s) com estoque abaixo do mínimo:
+              <ul className="mt-2 ml-4 list-disc">
+                {getLowStockProducts().slice(0, 3).map((p) => (
+                  <li key={p.id}>
+                    {p.name} - Atual: {p.current_quantity.toFixed(2)} / Mínimo: {p.minimum_quantity.toFixed(2)}
+                  </li>
                 ))}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+              </ul>
+            </AlertDescription>
+          </Alert>
+        )}
 
-        <Card className="mt-6 shadow-soft">
+        <Card>
           <CardHeader>
-            <CardTitle>Histórico de Movimentações</CardTitle>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-2xl flex items-center gap-2">
+                  Gestão de Estoque
+                </CardTitle>
+                <CardDescription>
+                  Controle de entrada e saída de materiais
+                </CardDescription>
+              </div>
+              <div className="flex gap-2">
+                <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
+                  <DialogTrigger asChild>
+                    <Button variant="outline">
+                      <History className="h-4 w-4 mr-2" />
+                      Histórico
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+                    <DialogHeader>
+                      <DialogTitle>Histórico de Movimentações</DialogTitle>
+                      <DialogDescription>
+                        Últimas 50 movimentações registradas
+                      </DialogDescription>
+                    </DialogHeader>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Data</TableHead>
+                          <TableHead>Produto</TableHead>
+                          <TableHead>Tipo</TableHead>
+                          <TableHead className="text-right">Quantidade</TableHead>
+                          <TableHead>Responsável</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {movements.map((movement: any) => (
+                          <TableRow key={movement.id}>
+                            <TableCell>
+                              {format(new Date(movement.created_at), "dd/MM/yyyy HH:mm", { locale: ptBR })}
+                            </TableCell>
+                            <TableCell>{movement.products.name}</TableCell>
+                            <TableCell>
+                              <Badge variant={movement.movement_type === "entrada" ? "default" : "secondary"}>
+                                {movement.movement_type === "entrada" ? (
+                                  <TrendingUp className="h-3 w-3 mr-1" />
+                                ) : (
+                                  <TrendingDown className="h-3 w-3 mr-1" />
+                                )}
+                                {movement.movement_type}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {movement.quantity.toFixed(2)} {movement.products.unit}
+                            </TableCell>
+                            <TableCell>{movement.responsible_name}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </DialogContent>
+                </Dialog>
+
+                <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button onClick={resetForm}>
+                      <TrendingUp className="h-4 w-4 mr-2" />
+                      Nova Movimentação
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Registrar Movimentação</DialogTitle>
+                      <DialogDescription>
+                        Registre entrada ou saída de produtos
+                      </DialogDescription>
+                    </DialogHeader>
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="product">Produto *</Label>
+                        <Select
+                          value={formData.product_id}
+                          onValueChange={(value) => setFormData({...formData, product_id: value})}
+                          required
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione um produto" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {products.map((product) => (
+                              <SelectItem key={product.id} value={product.id}>
+                                {product.name} - Atual: {product.current_quantity.toFixed(2)} {product.unit}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="movement_type">Tipo *</Label>
+                          <Select
+                            value={formData.movement_type}
+                            onValueChange={(value) => setFormData({...formData, movement_type: value})}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="entrada">Entrada</SelectItem>
+                              <SelectItem value="saida">Saída</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="quantity">Quantidade *</Label>
+                          <Input
+                            id="quantity"
+                            type="number"
+                            step="0.01"
+                            min="0.01"
+                            value={formData.quantity}
+                            onChange={(e) => setFormData({...formData, quantity: e.target.value})}
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="notes">Observações</Label>
+                        <Textarea
+                          id="notes"
+                          value={formData.notes}
+                          onChange={(e) => setFormData({...formData, notes: e.target.value})}
+                          rows={3}
+                        />
+                      </div>
+
+                      <DialogFooter>
+                        <Button type="button" variant="outline" onClick={resetForm}>
+                          Cancelar
+                        </Button>
+                        <Button type="submit">
+                          Registrar
+                        </Button>
+                      </DialogFooter>
+                    </form>
+                  </DialogContent>
+                </Dialog>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Data</TableHead>
-                  <TableHead>Produto</TableHead>
-                  <TableHead>Tipo</TableHead>
-                  <TableHead className="text-right">Quantidade</TableHead>
-                  <TableHead>Responsável</TableHead>
-                  <TableHead>Observações</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {movements.map((movement) => (
-                  <TableRow key={movement.id}>
-                    <TableCell>
-                      {new Date(movement.movement_date).toLocaleDateString("pt-BR", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </TableCell>
-                    <TableCell>{movement.products.name}</TableCell>
-                    <TableCell>
-                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium ${
-                        movement.movement_type === "entrada" 
-                          ? "bg-success/10 text-success" 
-                          : "bg-destructive/10 text-destructive"
-                      }`}>
-                        {movement.movement_type === "entrada" ? (
-                          <><Plus className="h-3 w-3" /> Entrada</>
-                        ) : (
-                          <><Minus className="h-3 w-3" /> Saída</>
-                        )}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right font-medium">
-                      {movement.quantity}
-                    </TableCell>
-                    <TableCell>{movement.profiles.full_name}</TableCell>
-                    <TableCell className="text-muted-foreground text-sm">
-                      {movement.notes || "-"}
-                    </TableCell>
+            <div className="border rounded-lg">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Produto</TableHead>
+                    <TableHead>Unidade</TableHead>
+                    <TableHead className="text-right">Qtd. Atual</TableHead>
+                    <TableHead className="text-right">Qtd. Mínima</TableHead>
+                    <TableHead className="text-center">Status</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            
-            {movements.length === 0 && (
-              <div className="text-center py-8 text-muted-foreground">
-                Nenhuma movimentação registrada
-              </div>
-            )}
+                </TableHeader>
+                <TableBody>
+                  {products.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-muted-foreground">
+                        Nenhum produto cadastrado
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    products.map((product) => {
+                      const isLowStock = product.current_quantity <= product.minimum_quantity;
+                      return (
+                        <TableRow key={product.id} className={isLowStock ? "bg-warning/5" : ""}>
+                          <TableCell className="font-medium">{product.name}</TableCell>
+                          <TableCell>{product.unit}</TableCell>
+                          <TableCell className="text-right">
+                            {product.current_quantity.toFixed(2)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {product.minimum_quantity.toFixed(2)}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            {isLowStock ? (
+                              <Badge variant="destructive" className="gap-1">
+                                <AlertTriangle className="h-3 w-3" />
+                                Estoque Baixo
+                              </Badge>
+                            ) : (
+                              <Badge variant="default" className="bg-success">
+                                Normal
+                              </Badge>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
+                  )}
+                </TableBody>
+              </Table>
+            </div>
           </CardContent>
         </Card>
       </main>
